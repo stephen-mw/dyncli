@@ -1,0 +1,252 @@
+#!/usr/bin/env python
+import json
+import argparse
+import requests
+from os import environ
+from sys import exit
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-e','--endpoint',dest='endpoint',default='https://api2.dynect.net/REST/',
+  help='The endpoint to make API requests.')
+parser.add_argument('-z','--zone',dest='zone',
+  help='The zone to take action on. Eg example.com.')
+parser.add_argument('-c','--create',dest='create',
+  help='Create a new record. Defaults to A record unless --cname is set.')
+parser.add_argument('--cname',dest='cname',action='store_true',
+  help='Create a cname record instead of an A record.')
+parser.add_argument('-v','--value',dest='value',
+  help='The value to set the DNS record to. Eg 10.0.0.101.')
+parser.add_argument('-t','--ttl',dest='ttl',type=int,default=300,
+  help='TTL of record in seconds.')
+parser.add_argument('-d','--delete',dest='delete',
+  help='Delete an existing record')
+parser.add_argument('-u','--update',dest='update_record',
+  help='Perform a DNS update on an existing record.')
+parser.add_argument('-U','--user',dest='user',
+  help='The username to connect to the dyn api. Can also be set as DYN_USER in environment.')
+parser.add_argument('-P','--password',dest='password',
+  help='The password to use with the dyn api. Can also be set as DYN_PW in environment.')
+parser.add_argument('-A','--account',dest='account',
+  help='The account name used to make API requests.')
+parser.add_argument('--verbose',dest='verbose',action='store_true',
+  help='Print out api responses.')
+args = parser.parse_args()
+
+config = {}
+config['endpoint'] = args.endpoint
+config['zone'] = args.zone
+config['create'] = args.create
+config['cname'] = args.cname
+config['value'] = args.value
+config['ttl'] = args.ttl
+config['delete'] = args.delete
+config['update_record'] = args.update_record
+config['user'] = args.user
+config['password'] = args.password
+config['account'] = args.account
+config['verbose'] = args.verbose
+config['token'] = None # placeholder for a session token
+
+def error(msg,exit_code=1):
+  '''
+  Helper function for printing errors and exiting. Default exit code is 1.
+  '''
+  print('Error: %s' % msg)
+  exit(exit_code)
+
+def verify_credentials():
+  '''
+  In order to make requests to the DYN api we need three pieces of info:
+    1. -U/--user or env['DYN_USER']
+    2. -P/--PASSWORD or env['DYN_PW']
+    3. -A/--account or env['DYN_ACCOUNT']
+
+  Check for the existence of these either as command line arguments or
+  environment variables. Command line arguments take precedence over ENV if
+  both are present.
+  '''
+  def test_env(local_var,env_var):
+    if not config[local_var]:
+      try:
+        config[local_var] = environ[env_var]
+      except KeyError:
+        error("%s not set on cmdline and %s not present in local environment" 
+          % (local_var,env_var))
+
+  test_env('user','DYN_USER')
+  test_env('password','DYN_PW')
+  test_env('account','DYN_ACCOUNT')
+
+def call_dyn(suffix,method='get',data=None):
+  '''
+  Call the dyn api. Returns json object
+  '''
+  response = None
+
+  url = config['endpoint'] + suffix
+  if config['verbose']:
+    print('Connecting to: ' + url)
+
+  header = {
+    'content-type': 'application/json',
+    'Accept': 'application/json'
+  }
+
+  if config['token']:
+    header['Auth-Token'] = config['token']
+
+  try:
+    if method == 'get':
+      response = requests.get(url,headers=header)
+    elif method == 'post':
+      response = requests.post(url,data=json.dumps(data),headers=header)
+    elif method == 'put':
+      response = requests.put(url,data=json.dumps(data),headers=header)
+    elif method == 'delete':
+      response = requests.delete(url,headers=header)
+  except Exception, e:
+    error(e)
+
+  resp = json.loads(response.text)
+  if config['verbose']:
+    print json.dumps(resp,indent=2)
+
+  if resp['status'] != 'success':
+    error(resp['msgs'][0]['INFO'])
+
+  return resp
+
+def get_token(credentials):
+  '''
+  Authenticates with Dyn. Returns a session token string if successful.
+
+  Requires a dict with the following:
+    dict['account']
+    dict['user']
+    dict['password]'
+
+  '''
+  suffix = 'Session/'
+  data = {
+    'customer_name': credentials['account'],
+    'user_name': credentials['user'],
+    'password': credentials['password']
+  }
+
+  print('Initializing session...')
+  return call_dyn(suffix,method='post',data=data)
+
+def publish(zone=config['zone']):
+  '''
+  Publish changes we've made to dyn. No going back from here.
+  '''
+  data = {
+    'publish': 1
+  }
+
+  suffix = "Zone/%s/" % zone
+  print('Attempting to publish zone...')
+  call_dyn(suffix,method='put',data=data)
+ 
+def create_record(address):
+  '''
+  Create a record. First argument is a dict with dict['address'],
+  dict['value'], and optionally dict['ttl'].
+  '''
+  payload = {
+    'rdata': {},
+    'ttl': address['ttl']
+  }
+
+  # Verify arguments
+  if address['create'] == 'None':
+    error('Missing argument. First argument must be the address to create.')
+  elif address['value'] == 'None':
+    error('Missing parameter -v/--value.')
+
+  if address['cname']:
+    payload['rdata']['cname'] = address['value']
+    suffix = 'CNAMERecord/%s/%s/' % (address['zone'], address['create'])
+  else:
+    payload['rdata']['address'] = address['value']
+    suffix = 'ARecord/%s/%s/' % (address['zone'], address['create'])
+
+  print('Attempting to create record...')
+  call_dyn(suffix,method='post',data=payload)
+  publish()
+
+def update_record(address):
+  '''
+  Update an existing record. Accepts dict with 'update_record' and either
+  'value' or 'ttl' or both.
+  '''
+  suffix = "ARecord/%s/%s/" % (address['zone'],address['update_record'])
+  payload = {
+    'rdata': {}
+  }
+
+  if address.get('value'):
+    payload['rdata'] = {
+      'address': address['value']
+    }
+
+  if address.get('ttl'):
+    payload['ttl'] = address['ttl']
+
+  print('Attempting to update record...')
+  resp = call_dyn(suffix,method='put',data=payload)
+  if resp['msgs'][0]['INFO'] == 'id: You did not reference a specific record':
+    error('Unable to update record. Check spelling or try --cname?')
+  publish()
+
+def delete_record(address):
+  '''
+  Delete a record. Requires a dict that with dict['delete'] and dict['value'].
+  Optionally is dict['cname'] (True/None) if the record is a cname.
+
+  Be very careful and ensure this is what you want to do.
+  '''
+  # Verify arguments
+  if not address['delete']:
+    error('Missing first argument.')
+
+  if address['cname']:
+    suffix = 'CNAMERecord/%s/%s/' % (address['zone'], address['delete'])
+  else:
+    suffix = 'ARecord/%s/%s/' % (address['zone'], address['delete'])
+
+  print('Attempting to delete record: %s' % address['delete'])
+  resp = call_dyn(suffix,method='delete')
+
+  print resp['msgs'][0]['INFO']
+  if resp['msgs'][0]['INFO'] == 'delete: 0 records deleted':
+    if not address['cname']:
+      error('No records deleted. Check spelling or try toggling --cname?')
+
+  publish()
+
+def end_session(token):
+  '''
+  Delete the existing session. Requires a token. This prevents further changes
+  from being made with the created session token.
+  '''
+  suffix = 'Session/'
+
+  print('Ending current session...')
+  call_dyn(suffix,method='delete')
+  exit()
+
+if __name__ == '__main__':
+  verify_credentials()
+  config['token'] = get_token(config)
+
+  if config['create']:
+    create_record(config)
+  elif config['update_record']:
+    update_record(config)
+  elif config['delete']:
+    delete_record(config)
+  else:
+    error('No arguments provided.')
+
+  end_session(config['token'])
