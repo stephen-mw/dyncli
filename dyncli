@@ -1,0 +1,112 @@
+#!/usr/bin/env python
+import json
+import argparse
+import dyndns
+from os import environ
+from sys import exit
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-z','--zone',dest='zone',
+  help='The zone to take action on. Eg example.com.')
+parser.add_argument('-c','--create',dest='create',
+  help='Create a new record. Defaults to A record unless --cname is set.')
+parser.add_argument('--cname',dest='cname',action='store_true',
+  help='Create a cname record instead of an A record.')
+parser.add_argument('-v','--value',dest='value',
+  help='The value to set the DNS record to. Eg 10.0.0.101.')
+parser.add_argument('-t','--ttl',dest='ttl',type=int,default=300,
+  help='TTL of record in seconds.')
+parser.add_argument('-d','--delete',dest='delete',
+  help='Delete an existing record')
+parser.add_argument('-u','--update',dest='update_record',
+  help='Perform a DNS update on an existing record.')
+parser.add_argument('-U','--user',dest='user',
+  help='The username to connect to the dyn api. Can also be set as DYN_USER in environment.')
+parser.add_argument('-P','--password',dest='password',
+  help='The password to use with the dyn api. Can also be set as DYN_PW in environment.')
+parser.add_argument('-A','--account',dest='account',
+  help='The account name used to make API requests.')
+parser.add_argument('--verbose',dest='verbose',action='store_true',
+  help='Print out api responses.')
+args = parser.parse_args()
+
+config = {}
+config['zone'] = args.zone
+config['create'] = args.create
+config['cname'] = args.cname
+config['value'] = args.value
+config['ttl'] = args.ttl
+config['delete'] = args.delete
+config['update_record'] = args.update_record
+config['user'] = args.user
+config['password'] = args.password
+config['account'] = args.account
+config['verbose'] = args.verbose
+
+if config['cname']:
+  config['type'] = 'cname'
+else:
+  config['type'] = 'address'
+
+def error(msg,exit_code=1):
+  '''
+  Helper function for printing errors and exiting. Default exit code is 1.
+  '''
+  print('Error: %s' % msg)
+  exit(exit_code)
+
+def verify_credentials():
+  '''
+  In order to make requests to the DYN api we need three pieces of info:
+    1. -U/--user or env['DYN_USER']
+    2. -P/--PASSWORD or env['DYN_PW']
+    3. -A/--account or env['DYN_ACCOUNT']
+
+  Check for the existence of these either as command line arguments or
+  environment variables. Command line arguments take precedence over ENV if
+  both are present.
+  '''
+  def test_env(local_var,env_var):
+    if not config[local_var]:
+      try:
+        config[local_var] = environ[env_var]
+      except KeyError:
+        error("%s not set on cmdline and %s not present in local environment" 
+          % (local_var,env_var))
+
+  test_env('user','DYN_USER')
+  test_env('password','DYN_PW')
+  test_env('account','DYN_ACCOUNT')
+  test_env('zone','DYN_ZONE')
+
+def main():
+  verify_credentials()
+
+  dyn = dyndns.Dynapi(
+    user=config['user'],
+    pw=config['password'],
+    account=config['account'],
+    zone=config['zone']
+  )
+
+  dyn.initialize()
+
+  if config['create']:
+    dyn.create_record(address=config['create'],value=config['value'],
+      type=config['type'],ttl=config['ttl']
+    )
+  elif config['update_record']:
+    dyn.update_record(address=config['update_record'],value=config['value'],
+      type=config['type'],ttl=config['ttl']
+  )
+  elif config['delete']:
+    dyn.delete_record(address=config['delete'],value=config['value'],
+      type=config['type']
+    )
+  else:
+    error('No arguments provided.')
+
+  dyn.publish()
+  dyn.end_session()
+
+exit(main())
