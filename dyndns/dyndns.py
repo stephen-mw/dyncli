@@ -13,6 +13,12 @@ class Dynapi:
     self.endpoint = 'https://api2.dynect.net/REST/'
     
   def call_dyn(self,suffix,method='get',data=None):
+    '''
+    Helper function to make api calls. Requires the suffix for the url
+    (everything after https://api2.dynect.net/REST/*), and optionally a method
+    (get, delete, put, or post). Data is also optional for put and post.
+    '''
+
     url = self.endpoint + suffix
 
     if method == 'get':
@@ -37,6 +43,10 @@ class Dynapi:
     return resp
   
   def initialize(self):
+    '''
+    Make a call to dyn and get our session token.
+    '''
+
     suffix = 'Session/'
     data = {
       'customer_name': self.account,
@@ -50,6 +60,9 @@ class Dynapi:
     return resp
   
   def create_record(self,address,value,type,ttl):
+    '''
+    Create an address record. Requires an address, value, and TTL.
+    '''
     if type == 'cname':
       suffix = 'CNAMERecord/%s/%s/' % (self.zone, address)
     elif type == 'address':
@@ -68,6 +81,11 @@ class Dynapi:
     return resp
 
   def update_address(self,address,type,value=None,ttl=None):
+    '''
+    Update and existing record. Requires an address, value, and type (address,
+    or cname). Because the endpoints are different you need to specify the
+    type.
+    '''
     if type == 'address':
       suffix = "ARecord/%s/%s/" % (self.zone,address)
     elif type == 'cname':
@@ -92,6 +110,9 @@ class Dynapi:
     return resp
   
   def delete_record(self,address,type):
+    '''
+    Delete a record. Requires address and type (address or cname).
+    '''
     if type == 'address':
       suffix = 'ARecord/%s/%s/' % (self.zone, address)
     elif type == 'cname':
@@ -104,15 +125,6 @@ class Dynapi:
     if resp['msgs'][0]['INFO'] == 'delete: 0 records deleted':
         raise Exception('No records deleted. Check spelling and record type')
 
-    return resp
-
-  def list(self,record=None):
-    if record:
-      suffix = 'AllRecord/%s/%s/' % (self.zone, record)
-    else:
-      suffix = 'AllRecord/%s/' % (self.zone)
-
-    resp = self.call_dyn(suffix)
     return resp
 
   def publish(self):
@@ -129,6 +141,10 @@ class Dynapi:
     return resp
 
   def end_session(self):
+    '''
+    Though not strictly necessary it's good to end the session so the token can
+    no longer be used.
+    '''
     suffix = 'Session/'
   
     resp = self.call_dyn(suffix,method='delete')
