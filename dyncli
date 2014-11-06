@@ -192,15 +192,15 @@ def list_records():
 
   return records
    
-def publish(zone=config['zone']):
+def publish(zone):
   '''
   Publish changes we've made to dyn. No going back from here.
   '''
   data = {
     'publish': 1
   }
-
-  suffix = 'Zone/%/' % address['zone']
+  print zone
+  suffix = 'Zone/%s/' % zone
   print('Attempting to publish zone...')
   call_dyn(suffix,method='put',data=data)
  
@@ -226,7 +226,7 @@ def create_record(address):
 
   print('Attempting to create record...')
   call_dyn(suffix,method='post',data=payload)
-  publish()
+  publish(config['zone'])
 
 def update_record(address):
   '''
@@ -250,7 +250,7 @@ def update_record(address):
   resp = call_dyn(suffix,method='put',data=payload)
   if resp['msgs'][0]['INFO'] == 'id: You did not reference a specific record':
     error('Unable to update record. Check spelling or try --cname?')
-  publish()
+  publish(config['zone'])
 
 def delete_record(address):
   '''
@@ -275,7 +275,7 @@ def delete_record(address):
     if not address['cname']:
       error('No records deleted. Check spelling or try toggling --cname?')
 
-  publish()
+  publish(config['zone'])
 
 def end_session(token):
   '''
